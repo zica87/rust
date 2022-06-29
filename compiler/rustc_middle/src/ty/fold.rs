@@ -465,12 +465,13 @@ impl<'tcx> TyCtxt<'tcx> {
     pub fn fold_regions<T>(
         self,
         value: T,
+        skipped_regions: &mut bool,
         mut f: impl FnMut(ty::Region<'tcx>, ty::DebruijnIndex) -> ty::Region<'tcx>,
     ) -> T
     where
         T: TypeFoldable<'tcx>,
     {
-        value.fold_with(&mut RegionFolder::new(self, &mut f))
+        value.fold_with(&mut RegionFolder::new(self, skipped_regions, &mut f))
     }
 
     /// Invoke `callback` on every region appearing free in `value`.
@@ -578,6 +579,7 @@ impl<'tcx> TyCtxt<'tcx> {
 
 pub struct RegionFolder<'a, 'tcx> {
     tcx: TyCtxt<'tcx>,
+    skipped_regions: &'a mut bool,
 
     /// Stores the index of a binder *just outside* the stuff we have
     /// visited.  So this begins as INNERMOST; when we pass through a
@@ -595,9 +597,10 @@ impl<'a, 'tcx> RegionFolder<'a, 'tcx> {
     #[inline]
     pub fn new(
         tcx: TyCtxt<'tcx>,
+        skipped_regions: &'a mut bool,
         fold_region_fn: &'a mut dyn FnMut(ty::Region<'tcx>, ty::DebruijnIndex) -> ty::Region<'tcx>,
     ) -> RegionFolder<'a, 'tcx> {
-        RegionFolder { tcx, current_index: ty::INNERMOST, fold_region_fn }
+        RegionFolder { tcx, skipped_regions, current_index: ty::INNERMOST, fold_region_fn }
     }
 }
 
@@ -621,6 +624,7 @@ impl<'a, 'tcx> TypeFolder<'tcx> for RegionFolder<'a, 'tcx> {
         match *r {
             ty::ReLateBound(debruijn, _) if debruijn < self.current_index => {
                 debug!(?self.current_index, "skipped bound region");
+                *self.skipped_regions = true;
                 r
             }
             _ => {
